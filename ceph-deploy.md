@@ -14,6 +14,20 @@ ceph-deploy
 
 1. 添加源与安装
 
+修改`hostname`
+
+```
+sudo vim /etc/hostname
+```
+
+配置源
+
+```
+sudo sed -i 's|raspbian.raspberrypi.org|mirrors.ustc.edu.cn/raspbian|g' /etc/apt/sources.list
+```
+
+下载`openssh-server`和`ntp`
+
 下面我们将`ceph-stable-release`替换为`pacific`
 
 ```
@@ -38,6 +52,8 @@ sudo -i
 
 
 **注意**，下面的`<hostname>`都要替换为pi机的hostname，一般为`raspberrypi`，具体看bash提示符的`user@hostname`这里可以看出来，或者自行搜索hostname查看方法(可设置hostname)
+
+可以通过修改`/etc/hostname`修改成你想修改的hostname
 
 首先要替换hosts，这里通过在`/etc/hosts`添加ip以及hostname可做到
 ```
@@ -155,3 +171,147 @@ root@raspberrypi:~/test# ceph mgr services
 8. [文件系统](https://www.zhihu.com/search?type=content&q=ceph-deploy%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F)
 9. [单机版部署](https://zhuanlan.zhihu.com/p/67832892)
 10. [网页版gui(在文章最后)](https://zhuanlan.zhihu.com/p/331770823)
+11. [创建pool以及测试](https://blog.csdn.net/haohzhang/article/details/86589381)
+
+
+单机版
+
+30s
+
+| PGs | Bandwidth |
+| --- | --------- |
+| 64  | 0.82      |
+| 128 | 0.99      |
+| 200 | 0.87      |
+| 256 | 1.01      |
+
+10s
+| PGs | Bandwidth |
+| --- | --------- |
+| 32  | 1.022     |
+| 64  | 0.911     |
+| 128 | 0.858     |
+| 256 | 0.720     |
+
+### 多节点
+
+修改`hostname`
+
+```
+sudo vim /etc/hostname
+```
+
+同时还要修改`/etc/hosts`文件
+
+对于admin节点
+
+加入
+```
+<ip> node1
+<ip> node2
+<ip> node3
+```
+
+对于其他节点，要将`raspberrypi`改成`node<x>`
+
+```
+127.0.0.1 node<x>(原本为raspberrypi)
+```
+
+对每个节点配置源
+
+```
+sudo sed -i 's|raspbian.raspberrypi.org|mirrors.ustc.edu.cn/raspbian|g' /etc/apt/sources.list
+```
+
+下载`openssh-server`和`ntp`
+
+在每个节点创建`test`用户
+
+```
+ssh pi@node{x}
+sudo useradd -d /home/test -m test
+sudo passwd test
+echo "test ALL = (root) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/test
+sudo chmod 0440 /etc/sudoers.d/test 
+```
+
+> 上面代码块中的后面两步让test用户拥有sudo权限
+
+在管理节点(admin)生成sshkey
+
+```
+ssh-keygen
+```
+
+然后拷贝到各节点
+
+```
+ssh-copy-id test@node1
+ssh-copy-id test@node2
+ssh-copy-id test@node3
+```
+
+然后节点之间可以相互ping一下，保证网络通畅
+
+接着开始部署
+
+选择node1为admin,node2为monitor,node3为osd
+
+在node1节点
+
+```
+mkdir my_cluster
+cd my_cluster
+```
+
+在以下步骤中若遇到麻烦，一定要执行下面两种操作
+
+```
+ceph-deploy purgedata node1 node2 ...
+ceph-deploy forgetkeys
+```
+> 这个为purge数据，忘记钥匙
+
+```
+ceph-deploy purge node1 node2 ...
+```
+> 这个会把安装好的ceph-common等也卸载掉，尽量少用
+
+然后创建monitor(mon)
+
+```
+ceph-deploy new node2
+```
+
+现在，node2就是monitor了
+
+然后还是在node1(admin)上将`ceph.conf`文件修改(该文件在`my-cluster`文件夹下)
+
+加入
+
+```
+osd pool default size = 2
+public network = {ip-address}/{netmask}(一般为node1 ip/24)
+```
+
+然后运行如下指令在各节点安装ceph
+
+```
+ceph-deploy install node1 node2 node3
+```
+
+然后还是在node1节点初始化monitor
+
+```
+ceph-deploy mon create-initial
+```
+
+创建完之后在`my-cluster`文件夹下应该有`ceph.client.admin.keyring`,`ceph.bootstrap-osd.keyring`,`ceph.bootstrap-mds.keyring`,`ceph.bootstrap-rgw.keyring`
+
+然后是添加osd，这里我们在node1, node3下创建
+
+```
+ssh node1
+sudo mkdir /var/local/osd0
+```
