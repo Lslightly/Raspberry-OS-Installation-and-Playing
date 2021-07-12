@@ -17,8 +17,10 @@ ceph-deploy
 修改`hostname`
 
 ```
-sudo vim /etc/hostname
+sudo vi /etc/hostname
 ```
+
+```sudo shutdown -r now```
 
 配置源
 
