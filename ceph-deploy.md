@@ -34,7 +34,7 @@ sudo sed -i 's|raspbian.raspberrypi.org|mirrors.ustc.edu.cn/raspbian|g' /etc/apt
 
 ```
 wget -q -O- 'https://download.ceph.com/keys/release.asc' | sudo apt-key add -
-echo deb https://download.ceph.com/debian-{ceph-stable-release}/ $(lsb_release -sc) main | sudo tee /etc/apt/sources.list.d/ceph.list
+echo deb https://download.ceph.com/debian-pacific/ $(lsb_release -sc) main | sudo tee /etc/apt/sources.list.d/ceph.list
 ```
 
 然后安装
@@ -178,47 +178,61 @@ root@raspberrypi:~/test# ceph mgr services
 
 单机版
 
+U盘
+
 30s
 
-| PGs | Bandwidth |
-| --- | --------- |
-| 64  | 0.82      |
-| 128 | 0.99      |
-| 200 | 0.87      |
-| 256 | 1.01      |
+| PGs | Bandwidth(MB/s) |
+| --- | --------------- |
+| 64  | 0.82            |
+| 128 | 0.99            |
+| 200 | 0.87            |
+| 256 | 1.01            |
 
 10s
-| PGs | Bandwidth |
-| --- | --------- |
-| 32  | 1.022     |
-| 64  | 0.911     |
-| 128 | 0.858     |
-| 256 | 0.720     |
+| PGs | Bandwidth(MB/s) |
+| --- | --------------- |
+| 32  | 1.022           |
+| 64  | 0.911           |
+| 128 | 0.858           |
+| 256 | 0.720           |
+
+SD卡分区
+
+10s
+
+write
+
+| PGs | BandWidth(MB/s) |
+| --- | --------------- |
+| 30  | 16.17           |
+| 60  | 15.40           |
+| 45  | 16.71           |
+
+seq
+| PGs | BandWidth(MB/s) |
+| --- | --------------- |
+| 30  | 21.80           |
+| 60  | 21.21           |
+| 45  | 21.52           |
+
+rand
+| PGs | BandWidth(MB/s) |
+| --- | --------------- |
+| 30  | 106.40          |
+| 60  | 104.34          |
+| 45  | 105.15          |
+
 
 ### 多节点
 
-修改`hostname`
+这里我们用三个树莓派搭建三节点的ceph存储系统
 
-```
-sudo vim /etc/hostname
-```
+首先通过ssh连接到admin树莓派(admin节点指定为node1,这里可以随意指定，自己记住就行)
 
-同时还要修改`/etc/hosts`文件
+#### SD卡分区
 
-对于admin节点
-
-加入
-```
-<ip> node1
-<ip> node2
-<ip> node3
-```
-
-对于其他节点，要将`raspberrypi`改成`node<x>`
-
-```
-127.0.0.1 node<x>(原本为raspberrypi)
-```
+#### 配置源
 
 对每个节点配置源
 
@@ -226,7 +240,41 @@ sudo vim /etc/hostname
 sudo sed -i 's|raspbian.raspberrypi.org|mirrors.ustc.edu.cn/raspbian|g' /etc/apt/sources.list
 ```
 
-下载`openssh-server`和`ntp`
+下载`openssh-server`,`ntp`,`vim`等必要软件
+
+#### 统一hostname
+
+#####  修改`hostname`
+
+```
+sudo vim /etc/hostname
+```
+
+将原本的`raspberrypi`改为`node1`
+
+对于其他树莓派也是类似操作，分别修改为`node2`,`node3`等
+
+##### 修改hosts
+
+对于admin节点，修改`/etc/hosts`文件
+
+在`/etc/hosts`中加入，同时还要将`loopback`的那一行删去
+```
+<ip> node1
+<ip> node2
+<ip> node3
+```
+
+> 这里`node1`,`node2`就是修改之后的`hostname`，ip对应每个节点的ip，注意不要对应错误
+
+对于其他节点(node2, node3...)
+
+找到`127.0.0.1 raspberrypi`做相应修改
+```
+127.0.0.1 node<x>(原本为raspberrypi)
+```
+
+#### 创建统一用户test并赋予sudo权限
 
 在每个节点创建`test`用户
 
@@ -240,9 +288,10 @@ sudo chmod 0440 /etc/sudoers.d/test
 
 > 上面代码块中的后面两步让test用户拥有sudo权限
 
-在管理节点(admin)生成sshkey
+以test用户登录在管理节点(admin)生成ssh key
 
 ```
+ssh test@{admin-node}
 ssh-keygen
 ```
 
@@ -256,9 +305,9 @@ ssh-copy-id test@node3
 
 然后节点之间可以相互ping一下，保证网络通畅
 
-接着开始部署
+#### 部署
 
-选择node1为admin,node2为monitor,node3为osd
+选择node1为admin,node2为monitor,node3为osd(admin之前已经选择了)
 
 在node1节点
 
@@ -273,12 +322,15 @@ cd my_cluster
 ceph-deploy purgedata node1 node2 ...
 ceph-deploy forgetkeys
 ```
-> 这个为purge数据，忘记钥匙
+
+> 上面为purge数据，忘记钥匙
 
 ```
 ceph-deploy purge node1 node2 ...
 ```
-> 这个会把安装好的ceph-common等也卸载掉，尽量少用
+> 上面会把安装好的ceph-common等也卸载掉，尽量少用
+
+##### 指定node2为monitor(mon)
 
 然后创建monitor(mon)
 
@@ -287,6 +339,8 @@ ceph-deploy new node2
 ```
 
 现在，node2就是monitor了
+
+##### 修改ceph.conf，进行简化版配置
 
 然后还是在node1(admin)上将`ceph.conf`文件修改(该文件在`my-cluster`文件夹下)
 
@@ -297,11 +351,15 @@ osd pool default size = 2
 public network = {ip-address}/{netmask}(一般为node1 ip/24)
 ```
 
+##### 在各节点安装ceph
+
 然后运行如下指令在各节点安装ceph
 
 ```
 ceph-deploy install node1 node2 node3
 ```
+
+##### 初始化monitor
 
 然后还是在node1节点初始化monitor
 
@@ -311,9 +369,60 @@ ceph-deploy mon create-initial
 
 创建完之后在`my-cluster`文件夹下应该有`ceph.client.admin.keyring`,`ceph.bootstrap-osd.keyring`,`ceph.bootstrap-mds.keyring`,`ceph.bootstrap-rgw.keyring`
 
+##### 添加osd
+
 然后是添加osd，这里我们在node1, node3下创建
 
 ```
-ssh node1
-sudo mkdir /var/local/osd0
+ssh test@node1
+ceph-deploy osd create --bluestore node1 --data /dev/mm...(空余的那个分区)
 ```
+
+node3类似
+
+这样就成功创建osd了
+
+##### 收集密钥
+
+这里还是在node1下
+
+```
+ceph-deploy admin node1 node1 node2 node3
+sudo chmod +r /etc/ceph/ceph.client.admin.keyring
+```
+
+##### GUI
+
+
+
+#### I/O测试
+
+读/写并行数为16，block size(块大小)
+
+write 10s
+
+| PG数量 | 带宽(BandWidth MB/s) |
+| ------ | -------------------- |
+| 32     | 0.642                |
+| 64     | 1.642                |
+| 128    | 1.68                 |
+| 250    | 1.906                |
+
+seq 10s
+
+| PG数量 | 带宽(MB/s) |
+| ------ | ---------- |
+| 32     | 1.18       |
+| 64     | 2.05       |
+| 128    | 3.09       |
+| 250    | 3.35       |
+
+
+rand 10s
+
+| PG数量 | 带宽(MB/s) |
+| ------ | ---------- |
+| 32     | 2.50       |
+| 64     | 2.11       |
+| 128    | 3.28       |
+| 250    | 3.52       |
